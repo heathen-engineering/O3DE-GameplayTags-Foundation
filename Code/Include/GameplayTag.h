@@ -19,6 +19,7 @@
 
 #include <AzCore/RTTI/RTTI.h>
 #include <AzCore/Serialization/SerializeContext.h>
+#include <AzCore/std/string/string.h>
 
 namespace Heathen
 {
@@ -35,14 +36,45 @@ namespace Heathen
         explicit GameplayTag(AZ::u64 id);
 
         AZ::u64 GetId() const;
-        bool IsValid() const;
-        
+        bool    IsValid() const;
+
+        /// Returns the registered dot-path name for this tag, or an empty string if unknown.
+        AZStd::string GetName() const;
+
+        // -----------------------------------------------------------------------
+        // Hierarchy
+        // -----------------------------------------------------------------------
+
+        /// Returns true if this tag is a descendant of 'ancestor'.
         bool IsDescendantOf(const GameplayTag& ancestor) const;
+
+        /// Returns true if this tag is a descendant of 'parent' (alias for IsDescendantOf).
+        bool IsChildOf(const GameplayTag& parent) const;
+
+        /// Returns true if 'child' is a descendant of this tag.
+        bool IsParentOf(const GameplayTag& child) const;
+
+        /// Returns a GameplayTagCollection containing all registered descendants of this tag.
         GameplayTagCollection GetDescendants() const;
 
-        static void Reflect(AZ::ReflectContext* context);
-        static GameplayTag Make(const AZStd::string& name);
-        static GameplayTag Cast(AZ::u64 id);
+        // -----------------------------------------------------------------------
+        // Construction
+        // -----------------------------------------------------------------------
+
+        static void         Reflect(AZ::ReflectContext* context);
+
+        /// Creates a GameplayTag by hashing the given dot-path name.
+        static GameplayTag  Make(const AZStd::string& name);
+
+        /// Alias for Make — matches Unity API naming.
+        static GameplayTag  FromName(const AZStd::string& name);
+
+        /// Creates a GameplayTag from a pre-computed hash id.
+        static GameplayTag  Cast(AZ::u64 id);
+
+        // -----------------------------------------------------------------------
+        // Operators
+        // -----------------------------------------------------------------------
 
         bool operator==(const GameplayTag& other) const;
         bool operator!=(const GameplayTag& other) const;
@@ -50,4 +82,5 @@ namespace Heathen
     private:
         AZ::u64 m_id = 0;
     };
-}
+
+} // namespace Heathen

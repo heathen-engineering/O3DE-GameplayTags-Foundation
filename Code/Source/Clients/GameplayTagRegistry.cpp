@@ -21,8 +21,8 @@
 
 namespace Heathen
 {
-    // Static lookup table - built once, valid chars return true
-    // ASCII only, indices 0-127
+    // Static lookup table — built once; valid chars return true.
+    // ASCII only, indices 0-127.
     static const bool s_validTagChars[128] = {
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 0-15
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 16-31
@@ -41,43 +41,72 @@ namespace Heathen
 
     AZStd::unordered_map<AZ::u64, AZStd::unordered_set<AZ::u64>> GameplayTagRegistry::m_descendants;
     AZStd::unordered_map<AZ::u64, AZStd::unordered_set<AZ::u64>> GameplayTagRegistry::m_defaultDescendants;
+    AZStd::unordered_map<AZ::u64, AZStd::string>                  GameplayTagRegistry::m_nameMap;
+    AZStd::unordered_map<AZ::u64, AZStd::string>                  GameplayTagRegistry::m_defaultNameMap;
+
+    // -------------------------------------------------------------------------
+
+    void GameplayTagRegistry::FireRegistryChanged()
+    {
+        GameplayTagNotificationBus::Broadcast(&GameplayTagNotifications::OnRegistryChanged);
+    }
+
+    // -------------------------------------------------------------------------
 
     void GameplayTagRegistry::Reflect(AZ::ReflectContext* context)
     {
         if (auto behavior = azrtti_cast<AZ::BehaviorContext*>(context))
         {
+            // String-based IsRegistered overload (used in SC for user-authored checks)
+            using IsRegisteredByString = bool(*)(const AZStd::string&);
+
             behavior->Class<GameplayTagRegistry>("Gameplay Tag Registry")
                 ->Attribute(AZ::Script::Attributes::Category, "Gameplay Tags")
-                ->Method("Gameplay Tag Registry Hash", &GameplayTagRegistry::Hash,
-                    {{{ "Tag String", "The tag string to hash" }}})
-                ->Method("Gameplay Tag Register From String Data", &GameplayTagRegistry::RegisterFromStringData,
-                    {{{ "Tag String", "Line delimited list of tags to register" }}})
-                ->Method("Gameplay Tag Is Registered", &GameplayTagRegistry::IsRegistered,
-                    {{{ "Tag String", "The tag string to check" }}})
-                ->Method("Gameplay Tag Unregister From String Data", &GameplayTagRegistry::UnregisterFromStringData,
-                    {{{ "Tag String", "Line delimited list of tags to unregister" }}})
-                ->Method("Gameplay Tag Unregister All", &GameplayTagRegistry::UnregisterAll);
+                ->Method("Hash", &GameplayTagRegistry::Hash,
+                    {{{ "Tag String", "The dot-path tag string to hash" }}},
+                    "Returns the u64 xxHash3 of a tag string")
+                ->Method("Register From String Data", &GameplayTagRegistry::RegisterFromStringData,
+                    {{{ "Tag String", "Newline-delimited list of dot-path tags to register" }}})
+                ->Method("Is Registered", static_cast<IsRegisteredByString>(&GameplayTagRegistry::IsRegistered),
+                    {{{ "Tag String", "The dot-path tag string to check" }}},
+                    "Returns true if the tag string names a registered tag")
+                ->Method("Unregister From String Data", &GameplayTagRegistry::UnregisterFromStringData,
+                    {{{ "Tag String", "Newline-delimited list of dot-path tags to unregister" }}})
+                ->Method("Unregister All", &GameplayTagRegistry::UnregisterAll,
+                    "Clears user-registered tags; project-default tags survive")
+                ->Method("Get Name", &GameplayTagRegistry::GetName,
+                    {{{ "Id", "Pre-hashed tag id (u64)" }}},
+                    "Returns the dot-path name for a registered tag id, or empty string if unknown")
+                ->Method("Get All Names", &GameplayTagRegistry::GetAllNames,
+                    "Returns the dot-path names of all registered tags")
+                ->Method("Get All Ids", &GameplayTagRegistry::GetAllIds,
+                    "Returns the hashed ids of all registered tags");
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Hashing
+    // -------------------------------------------------------------------------
 
     AZ::u64 GameplayTagRegistry::Hash(const AZStd::string& text)
     {
         return XXH3_64bits(text.data(), text.size());
     }
 
+    // -------------------------------------------------------------------------
+    // Registration
+    // -------------------------------------------------------------------------
+
     void GameplayTagRegistry::RegisterFromStringData(const AZStd::string& tag_string)
     {
         AZStd::vector<AZStd::string> tags = ParseTagString(tag_string);
-
         if (tags.empty())
-        {
             return;
-        }
 
         for (const AZStd::string& tag : tags)
         {
-            // Decompose tag into all prefix nodes
-            // e.g. Effects.Buff.Strength -> [Effects, Effects.Buff, Effects.Buff.Strength]
+            // Decompose into all prefix nodes.
+            // e.g. "Effects.Buff.Strength" → ["Effects", "Effects.Buff", "Effects.Buff.Strength"]
             AZStd::vector<AZStd::string> prefixStrings;
             AZStd::string build;
             size_t start = 0;
@@ -89,9 +118,7 @@ namespace Heathen
                     if (i > start)
                     {
                         if (!build.empty())
-                        {
                             build += '.';
-                        }
                         build += tag.substr(start, i - start);
                         prefixStrings.push_back(build);
                     }
@@ -99,100 +126,72 @@ namespace Heathen
                 }
             }
 
-            // For each prefix node, insert all tags that fall below it
-            // A tag is a descendant of a prefix if the tag starts with prefix + "."
-            // The prefix itself is not a descendant of itself
             for (size_t i = 0; i < prefixStrings.size(); ++i)
             {
                 const AZ::u64 prefixHash = Hash(prefixStrings[i]);
 
-                // Ensure the node exists in the map even if it gets no descendants (leaf)
+                // Ensure the node exists in the map even if it has no descendants (leaf).
                 m_descendants.emplace(prefixHash, AZStd::unordered_set<AZ::u64>{});
 
-                // All prefix nodes below this one are descendants
+                // Record name string.
+                m_nameMap[prefixHash] = prefixStrings[i];
+
+                // All deeper prefix nodes are descendants of this node.
                 for (size_t j = i + 1; j < prefixStrings.size(); ++j)
-                {
                     m_descendants[prefixHash].insert(Hash(prefixStrings[j]));
-                }
             }
         }
-    }
 
-    bool GameplayTagRegistry::IsRegistered(const AZStd::string& tag_string)
-    {
-        if (!ValidateTag(tag_string))
-        {
-            return false;
-        }
-        return m_descendants.find(Hash(tag_string)) != m_descendants.end();
+        FireRegistryChanged();
     }
 
     void GameplayTagRegistry::UnregisterFromStringData(const AZStd::string& tag_string)
     {
         AZStd::vector<AZStd::string> tags = ParseTagString(tag_string);
-
         if (tags.empty())
-        {
             return;
-        }
 
-        // Build the full removal set
-        // For each tag in input, collect it and all its descendants
+        // Build the full removal set: each input tag plus all its descendants.
         AZStd::unordered_set<AZ::u64> removalSet;
-
         for (const AZStd::string& tag : tags)
         {
             const AZ::u64 id = Hash(tag);
-
-            // Add the tag itself
             removalSet.insert(id);
 
-            // Add all its descendants if it is a category
             auto it = m_descendants.find(id);
             if (it != m_descendants.end())
-            {
                 for (const AZ::u64 descendant : it->second)
-                {
                     removalSet.insert(descendant);
-                }
-            }
         }
 
-        // Remove all nodes in the removal set from m_descendants
+        // Remove entries from m_descendants and m_nameMap.
         for (const AZ::u64 id : removalSet)
         {
             m_descendants.erase(id);
+            m_nameMap.erase(id);
         }
 
-        // Scrub removal set from all remaining ancestor nodes
-        // Collect nodes that become empty after scrubbing for a second pass removal
+        // Scrub removal set from remaining ancestor sets.
         AZStd::vector<AZ::u64> toRemove;
-
-        for (auto& pair : m_descendants)
+        for (auto& [ancestorId, descendantSet] : m_descendants)
         {
             for (const AZ::u64 removed : removalSet)
-            {
-                pair.second.erase(removed);
-            }
-
-            if (pair.second.empty())
-            {
-                toRemove.push_back(pair.first);
-            }
+                descendantSet.erase(removed);
+            if (descendantSet.empty())
+                toRemove.push_back(ancestorId);
         }
-
-        // Remove any ancestor nodes that became empty
         for (const AZ::u64 id : toRemove)
-        {
             m_descendants.erase(id);
-        }
+
+        FireRegistryChanged();
     }
 
     void GameplayTagRegistry::UnregisterAll()
     {
-        // Restore to the project defaults loaded from .tagbin products.
-        // User-registered tags are discarded; default tags survive.
+        // Restore to project defaults; user-registered tags are discarded.
         m_descendants = m_defaultDescendants;
+        m_nameMap     = m_defaultNameMap;
+        FireRegistryChanged();
     }
 
     void GameplayTagRegistry::MergeDefaultTags(
@@ -200,59 +199,114 @@ namespace Heathen
     {
         for (const auto& [parent, children] : defaults)
         {
-            auto& dest = m_defaultDescendants[parent];
+            auto& destDefault = m_defaultDescendants[parent];
+            auto& destLive    = m_descendants[parent];
             for (AZ::u64 child : children)
-                dest.insert(child);
+            {
+                destDefault.insert(child);
+                destLive.insert(child);
+            }
         }
-        // Also merge into the live working map so they are immediately visible.
-        for (const auto& [parent, children] : defaults)
-        {
-            auto& dest = m_descendants[parent];
-            for (AZ::u64 child : children)
-                dest.insert(child);
-        }
+        // Note: MergeDefaultTags only receives a descendants map, not name strings.
+        // Name strings are registered separately via RegisterFromStringData when the
+        // editor system component activates and loads the .gptags source files.
+        FireRegistryChanged();
     }
+
+    // -------------------------------------------------------------------------
+    // Presence / validation
+    // -------------------------------------------------------------------------
+
+    bool GameplayTagRegistry::IsRegistered(const AZStd::string& tag_string)
+    {
+        if (!ValidateTag(tag_string))
+            return false;
+        return m_descendants.find(Hash(tag_string)) != m_descendants.end();
+    }
+
+    bool GameplayTagRegistry::IsRegistered(AZ::u64 id)
+    {
+        return m_descendants.find(id) != m_descendants.end();
+    }
+
+    bool GameplayTagRegistry::ValidateTag(const AZStd::string& tag_string)
+    {
+        if (tag_string.empty())
+            return false;
+        if (tag_string.front() == '.' || tag_string.back() == '.')
+            return false;
+        bool last_was_dot = false;
+        for (char c : tag_string)
+        {
+            if (static_cast<unsigned char>(c) >= 128)
+                return false;
+            if (!s_validTagChars[static_cast<int>(c)])
+                return false;
+            const bool is_dot = (c == '.');
+            if (is_dot && last_was_dot)
+                return false;
+            last_was_dot = is_dot;
+        }
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Name lookup
+    // -------------------------------------------------------------------------
+
+    AZStd::string GameplayTagRegistry::GetName(AZ::u64 id)
+    {
+        auto it = m_nameMap.find(id);
+        return (it != m_nameMap.end()) ? it->second : AZStd::string{};
+    }
+
+    AZStd::vector<AZStd::string> GameplayTagRegistry::GetAllNames()
+    {
+        AZStd::vector<AZStd::string> result;
+        result.reserve(m_nameMap.size());
+        for (const auto& [id, name] : m_nameMap)
+            result.push_back(name);
+        return result;
+    }
+
+    AZStd::vector<AZ::u64> GameplayTagRegistry::GetAllIds()
+    {
+        AZStd::vector<AZ::u64> result;
+        result.reserve(m_nameMap.size());
+        for (const auto& [id, name] : m_nameMap)
+            result.push_back(id);
+        return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // Hierarchy queries
+    // -------------------------------------------------------------------------
 
     bool GameplayTagRegistry::IsDescendantOf(AZ::u64 tag, AZ::u64 ancestor)
     {
         auto it = m_descendants.find(ancestor);
         if (it == m_descendants.end())
-        {
             return false;
-        }
-
-        const auto& children = it->second;
-
-        return children.find(tag) != children.end();
+        return it->second.find(tag) != it->second.end();
     }
 
     bool GameplayTagRegistry::ContainsAnyDescendantOf(const AZStd::unordered_map<AZ::u64, AZ::u64>& collection, AZ::u64 ancestor)
     {
         auto it = m_descendants.find(ancestor);
         if (it == m_descendants.end())
-        {
             return false;
-        }
         const auto& descendants = it->second;
         if (collection.size() < descendants.size())
         {
-            for (const auto& pair : collection)
-            {
-                if (descendants.find(pair.first) != descendants.end())
-                {
+            for (const auto& [id, val] : collection)
+                if (descendants.find(id) != descendants.end())
                     return true;
-                }
-            }
         }
         else
         {
             for (const AZ::u64 descendant : descendants)
-            {
                 if (collection.find(descendant) != collection.end())
-                {
                     return true;
-                }
-            }
         }
         return false;
     }
@@ -261,24 +315,13 @@ namespace Heathen
     {
         auto it = m_descendants.find(ancestor);
         if (it == m_descendants.end())
-        {
             return false;
-        }
-
         const auto& descendants = it->second;
-
         if (collection.size() > descendants.size())
-        {
             return false;
-        }
-
-        for (const auto& pair : collection)
-        {
-            if (descendants.find(pair.first) == descendants.end())
-            {
+        for (const auto& [id, val] : collection)
+            if (descendants.find(id) == descendants.end())
                 return false;
-            }
-        }
         return true;
     }
 
@@ -286,70 +329,25 @@ namespace Heathen
     {
         auto it = m_descendants.find(ancestor);
         if (it == m_descendants.end())
-        {
             return false;
-        }
-
         const auto& descendants = it->second;
-
         if (collection.size() < descendants.size())
-        {
             return false;
-        }
-
-        // every descendant must exist in collection
         for (const AZ::u64 descendant : descendants)
-        {
             if (collection.find(descendant) == collection.end())
-            {
                 return false;
-            }
-        }
         return true;
     }
 
     AZStd::unordered_set<AZ::u64> GameplayTagRegistry::GetDescendants(AZ::u64 tag)
     {
         auto it = m_descendants.find(tag);
-        if (it == m_descendants.end())
-        {
-            return {};
-        }
-
-        return it->second;
+        return (it != m_descendants.end()) ? it->second : AZStd::unordered_set<AZ::u64>{};
     }
 
-    bool GameplayTagRegistry::ValidateTag(const AZStd::string& tag_string)
-    {
-        if (tag_string.empty())
-        {
-            return false;
-        }
-        if (tag_string.front() == '.' || tag_string.back() == '.')
-        {
-            return false;
-        }
-        bool last_was_dot = false;
-        for (char c : tag_string)
-        {
-            // Reject non-ASCII immediately
-            if (static_cast<unsigned char>(c) >= 128)
-            {
-                return false;
-            }
-            if (!s_validTagChars[static_cast<int>(c)])
-            {
-                return false;
-            }
-            const bool is_dot = (c == '.');
-            if (is_dot && last_was_dot)
-            {
-                return false;
-            }
-            last_was_dot = is_dot;
-        }
-        return true;
-    }
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
 
     AZStd::vector<AZStd::string> GameplayTagRegistry::ParseTagString(const AZStd::string& tag_string)
     {
@@ -363,14 +361,9 @@ namespace Heathen
                 if (!current.empty())
                 {
                     if (ValidateTag(current))
-                    {
                         result.push_back(current);
-                    }
                     else
-                    {
-                        AZ_Warning("GameplayTagRegistry", false,
-                            "Invalid tag rejected: %s", current.c_str());
-                    }
+                        AZ_Warning("GameplayTagRegistry", false, "Invalid tag rejected: %s", current.c_str());
                     current.clear();
                 }
             }
@@ -380,20 +373,15 @@ namespace Heathen
             }
         }
 
-        // Handle final line with no trailing newline
         if (!current.empty())
         {
             if (ValidateTag(current))
-            {
                 result.push_back(current);
-            }
             else
-            {
-                AZ_Warning("GameplayTagRegistry", false,
-                    "Invalid tag rejected: %s", current.c_str());
-            }
+                AZ_Warning("GameplayTagRegistry", false, "Invalid tag rejected: %s", current.c_str());
         }
 
         return result;
     }
-}
+
+} // namespace Heathen

@@ -25,20 +25,15 @@ namespace Heathen
 
     GameplayTag::GameplayTag(const AZStd::string& name)
     {
-        if (GameplayTagRegistry::ValidateTag(name))
-            m_id = GameplayTagRegistry::Hash(name);
-        else
-            m_id = 0;
+        m_id = GameplayTagRegistry::ValidateTag(name) ? GameplayTagRegistry::Hash(name) : 0;
     }
 
-    AZ::u64 GameplayTag::GetId() const
-    {
-        return m_id;
-    }
+    AZ::u64       GameplayTag::GetId()    const { return m_id; }
+    bool          GameplayTag::IsValid()  const { return m_id != 0; }
 
-    bool GameplayTag::IsValid() const
+    AZStd::string GameplayTag::GetName() const
     {
-        return m_id != 0;
+        return GameplayTagRegistry::GetName(m_id);
     }
 
     bool GameplayTag::IsDescendantOf(const GameplayTag& ancestor) const
@@ -46,16 +41,31 @@ namespace Heathen
         return GameplayTagRegistry::IsDescendantOf(m_id, ancestor.m_id);
     }
 
+    bool GameplayTag::IsChildOf(const GameplayTag& parent) const
+    {
+        return IsDescendantOf(parent);
+    }
+
+    bool GameplayTag::IsParentOf(const GameplayTag& child) const
+    {
+        return GameplayTagRegistry::IsDescendantOf(child.m_id, m_id);
+    }
+
     GameplayTagCollection GameplayTag::GetDescendants() const
     {
         AZStd::unordered_set<AZ::u64> descendants = GameplayTagRegistry::GetDescendants(m_id);
         GameplayTagCollection result;
         for (const AZ::u64 id : descendants)
-        {
             result.AddTag(GameplayTag(id));
-        }
         return result;
     }
+
+    GameplayTag GameplayTag::Make(const AZStd::string& name)     { return GameplayTag(name); }
+    GameplayTag GameplayTag::FromName(const AZStd::string& name) { return GameplayTag(name); }
+    GameplayTag GameplayTag::Cast(AZ::u64 id)                    { return GameplayTag(id); }
+
+    bool GameplayTag::operator==(const GameplayTag& other) const { return m_id == other.m_id; }
+    bool GameplayTag::operator!=(const GameplayTag& other) const { return m_id != other.m_id; }
 
     void GameplayTag::Reflect(AZ::ReflectContext* context)
     {
@@ -74,15 +84,32 @@ namespace Heathen
                 ->Constructor<>()
                 ->Constructor<AZ::u64>()
                 ->Constructor<const AZStd::string&>()
-                ->Method("Make Gameplay Tag", &GameplayTag::Make,
-                    {{{ "Tag String", "The dot-delimited tag string e.g. Effects.Buff.Strength" }}})
-                ->Method("Cast to Gameplay Tag", &GameplayTag::Cast,
-                    {{{ "Id", "A raw u64 hash value representing a tag" }}})
-                ->Method("Get Id", &GameplayTag::GetId)
-                ->Method("Is Valid", &GameplayTag::IsValid)
-                ->Method("Is DescendantOf", &GameplayTag::IsDescendantOf,
-                    {{{ "Ancestor", "The ancestor tag to test against" }}})
-                ->Method("Get Descendants", &GameplayTag::GetDescendants)
+                ->Method("Make", &GameplayTag::Make,
+                    {{{ "Tag String", "Dot-delimited tag path e.g. Effects.Buff.Strength" }}},
+                    "Creates a GameplayTag by hashing the dot-path name")
+                ->Method("From Name", &GameplayTag::FromName,
+                    {{{ "Tag String", "Dot-delimited tag path e.g. Effects.Buff.Strength" }}},
+                    "Alias for Make — creates a GameplayTag by hashing the dot-path name")
+                ->Method("Cast", &GameplayTag::Cast,
+                    {{{ "Id", "Pre-computed u64 hash id" }}},
+                    "Creates a GameplayTag from a raw u64 hash id")
+                ->Method("Get Id", &GameplayTag::GetId,
+                    "Returns the raw u64 hash id")
+                ->Method("Get Name", &GameplayTag::GetName,
+                    "Returns the registered dot-path name, or empty string if unknown")
+                ->Method("Is Valid", &GameplayTag::IsValid,
+                    "Returns true if this tag has a non-zero id")
+                ->Method("Is Descendant Of", &GameplayTag::IsDescendantOf,
+                    {{{ "Ancestor", "The ancestor tag to test against" }}},
+                    "Returns true if this tag is a descendant of ancestor")
+                ->Method("Is Child Of", &GameplayTag::IsChildOf,
+                    {{{ "Parent", "The parent tag to test against" }}},
+                    "Alias for Is Descendant Of")
+                ->Method("Is Parent Of", &GameplayTag::IsParentOf,
+                    {{{ "Child", "The child tag to test" }}},
+                    "Returns true if this tag is an ancestor of child")
+                ->Method("Get Descendants", &GameplayTag::GetDescendants,
+                    "Returns a collection containing all registered descendants")
                 ->Method("Equal", &GameplayTag::operator==,
                     {{{ "Other", "The tag to compare against" }}})
                 ->Method("Not Equal", &GameplayTag::operator!=,
@@ -90,24 +117,4 @@ namespace Heathen
         }
     }
 
-    // In GameplayTag.cpp
-    GameplayTag GameplayTag::Make(const AZStd::string& name)
-    {
-        return GameplayTag(name);
-    }
-
-    GameplayTag GameplayTag::Cast(AZ::u64 id)
-    {
-        return GameplayTag(id);
-    }
-
-    bool GameplayTag::operator==(const GameplayTag& other) const
-    {
-        return m_id == other.m_id;
-    }
-
-    bool GameplayTag::operator!=(const GameplayTag& other) const
-    {
-        return m_id != other.m_id;
-    }
-}
+} // namespace Heathen
