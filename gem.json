@@ -21,7 +21,7 @@
     "requirements": "",
     "documentation_url": "https://heathen.group",
     "dependencies": [
-        "xxHash"
+        "xxHash","EditorExtensions"
     ],
     "repo_uri": "https://github.com/heathen-engineering/O3DE-Foundation-for-GameplayTags",
     "compatible_engines": [
