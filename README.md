@@ -9,6 +9,10 @@ A lightweight, flexible tag system for [Open 3D Engine (O3DE)](https://o3de.org)
 - **Origin:** Heathen Group
 - **Platforms:** Windows, Linux, macOS, Android, iOS
 
+> [!TIP]
+> **Looking for the easiest way to install?**  
+> You can add this gem—along with all of Heathen's free O3DE tools—by using the centralized [O3DE-Gems](https://github.com/heathen-engineering/O3DE-Gems) repository. Step-by-step setup instructions are available directly in its README.
+
 ---
 
 ## Requirements
