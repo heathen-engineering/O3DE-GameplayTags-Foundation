@@ -1,0 +1,7 @@
+
+# No dot-prefixed folder is ever checked in to this repo (IDE project files, local agent tool
+# state, whatever creates it). Only .github/ is exempted, since its workflow files are real,
+# load-bearing repo infrastructure, not local tool state.
+.*/
+!/.github/
+!/.github/**
