@@ -1,4 +1,4 @@
-> **Migrating to Codeberg:** this repo is moving to [codeberg.org/Heathen-Engineering/O3DE-Foundation-for-GameplayTags](https://codeberg.org/Heathen-Engineering/O3DE-Foundation-for-GameplayTags). GitHub will remain a read-only mirror during the transition.
+> **Moved to Codeberg:** this repo now lives at [codeberg.org/Heathen-Engineering/O3DE-GameplayTags-Foundation](https://codeberg.org/Heathen-Engineering/O3DE-GameplayTags-Foundation). GitHub will remain a read-only mirror during the transition.
 
 # Gameplay Tags Foundation
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)
